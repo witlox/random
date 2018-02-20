@@ -72,9 +72,9 @@ function Get-CPUs {
 }
 
 workflow CellProfiler-Batch {
-    param([String[]]$jobs)
+    param([String]$runner, [String[]]$jobs)
     foreach -parallel ($job in $jobs) {
-        Invoke-Process $app $job
+        Invoke-Process $runner $job
     }
 }
 
@@ -96,6 +96,6 @@ for ($index=0; $index -lt $samples; $index+=$chunk) {
     $last = [math]::min(($index + $chunk),$samples)
     $commands += "-p $inputfile -c -r -f $first -l $last"
 }
-CellProfiler-Batch $commands
+CellProfiler-Batch $app $commands
 
 Write-Output "finished"
