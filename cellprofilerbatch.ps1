@@ -14,52 +14,13 @@
 #
 #   You should have received a copy of the GNU General Public License
 #   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-param([String]$inputfile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$numproc=0, [String]$app="C:\Program Files\CellProfiler\CellProfiler.exe")
 
-function Invoke-Process {
-    [CmdletBinding(SupportsShouldProcess)]
-    param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$FilePath,[Parameter()][ValidateNotNullOrEmpty()][string]$ArgumentList)
-
-     Write-Output "Going to invoke $FilePath with arguments: $ArgumentList"
-
-    $ErrorActionPreference = 'Stop'
-
-    try {
-        $stdOutTempFile = "$env:TEMP\$([guid]::NewGuid())"
-        $stdErrTempFile = "$env:TEMP\$([guid]::NewGuid())"
-
-        $startProcessParams = @{
-            FilePath = $FilePath
-            ArgumentList = $ArgumentList
-            RedirectStandardError = $stdErrTempFile
-            RedirectStandardOutput = $stdOutTempFile
-            Wait = $true;
-            PassThru = $true;
-            NoNewWindow = $true;
-        }
-        if ($PSCmdlet.ShouldProcess("Process [$($FilePath)]", "Run with args: [$($ArgumentList)]")) {
-            $cmd = Start-Process @startProcessParams
-            $cmdOutput = Get-Content -Path $stdOutTempFile -Raw
-            $cmdError = Get-Content -Path $stdErrTempFile -Raw
-            if ($cmd.ExitCode -ne 0) {
-                if ($cmdError) {
-                    throw $cmdError.Trim()
-                }
-                if ($cmdOutput) {
-                    throw $cmdOutput.Trim()
-                }
-            } else {
-                if ([string]::IsNullOrEmpty($cmdOutput) -eq $false) {
-                    Write-Output -InputObject $cmdOutput
-               }
-            }
-        }
-    } catch {
-        $PSCmdlet.ThrowTerminatingError($_)
-    } finally {
-        Remove-Item -Path $stdOutTempFile, $stdErrTempFile -Force -ErrorAction Ignore
-    }
-}
+# inputfile: path to input, use double quotes
+# samples: total set of samples to devide over the amount of processes
+# numproc: number of processes to spawn (0 = as many as we have cpu's)
+# app: application to run
+# start: offset of the samples to start at
+param([String]$inputfile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$numproc=0, [String]$app="C:\Program Files\CellProfiler\CellProfiler.exe", [Int32]$start=1)
 
 function Get-CPUs {
     $processors = get-wmiobject -computername localhost win32_processor
@@ -72,10 +33,15 @@ function Get-CPUs {
 }
 
 workflow CellProfiler-Batch {
-    param([String]$runner, [String[]]$jobs)
+    param([String[]]$jobs, [String]$app)
+    $jc = $jobs.Length
+    Write-Output "got $jc jobs"
+    $processes = @()
     foreach -parallel ($job in $jobs) {
-        Invoke-Process $runner $job
+         Write-Output "Going to invoke $app with arguments: $job"
+         $WORKFLOW:processes += Start-Process -FilePath $app -ArgumentList $job -PassThru
     }
+    return $processes
 }
 
 Write-Output "preparing cellprofiler batch run"
@@ -87,15 +53,29 @@ if ($numproc -eq 0) {
     Write-Output "using specified number of processes $cc"
 }
 
-$chunk = [math]::Ceiling($samples/$cc)
+$chunk = [math]::Ceiling(($samples-($start-1))/$cc)
 Write-Output  "Using chunk size $chunk"
 
 $commands = @()
-for ($index=0; $index -lt $samples; $index+=$chunk) {
+for ($index=$start-1; $index -lt $samples; $index+=$chunk) {
     $first = $index+1
     $last = [math]::min(($index + $chunk),$samples)
     $commands += "-p $inputfile -c -r -f $first -l $last"
 }
-CellProfiler-Batch $app $commands
+
+$processes = CellProfiler-Batch $commands $app
+
+$running = 0
+Do {
+    $running = 0
+    Write-Output "checking background processes"
+    foreach ($process in $processes) {
+        if (!$process.HasExited) {
+            $running++
+        }
+    }
+    Write-Output "$running processes alive"
+    Start-Sleep 10
+} While ($running -ne 0)
 
 Write-Output "finished"
