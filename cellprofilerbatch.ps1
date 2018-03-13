@@ -15,67 +15,73 @@
 #   You should have received a copy of the GNU General Public License
 #   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# inputfile: path to input, use double quotes
-# samples: total set of samples to devide over the amount of processes
-# numproc: number of processes to spawn (0 = as many as we have cpu's)
-# app: application to run
+# inputFile: path to input, use double quotes
+# samples: total set of samples to divide over the amount of processes
+# jobCount: number of jobs to spawn (0 = as many as we have CPU's)
+# application: application to run
 # start: offset of the samples to start at
-param([String]$inputfile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$numproc=0, [String]$app="C:\Program Files\CellProfiler\CellProfiler.exe", [Int32]$start=1)
+param([String]$inputFile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$jobCount=0, [String]$application="C:\Program Files\CellProfiler\CellProfiler.exe", [Int32]$start=1)
 
-function Get-CPUs {
-    $processors = get-wmiobject -computername localhost win32_processor
+Write-Debug "clearing old cache"
+Get-Job -Name cp-* | Remove-Job -Force
+
+Write-Output "starting cellprofiler batch run"
+if ($jobCount -eq 0) {
+    Write-Output "no jobCount specified, detecting number of cores"
+    $processors = Get-WmiObject -ComputerName localhost win32_processor
     if (@($processors)[0].NumberOfCores) {
         $cores = @($processors).count * @($processors)[0].NumberOfCores
     } else {
         $cores = @($processors).count
     }
-    return $cores
+    $jobCount = $cores
 }
+Write-Debug "setting number of jobs to $jobCount"
+$chunk = [math]::Ceiling(($samples-($start-1))/$jobCount)
+Write-Debug "chunk size determined as $chunk"
 
-workflow CellProfiler-Batch {
-    param([String[]]$jobs, [String]$app)
-    $jc = $jobs.Length
-    Write-Output "got $jc jobs"
-    $processes = @()
-    foreach -parallel ($job in $jobs) {
-         Write-Output "Going to invoke $app with arguments: $job"
-         $WORKFLOW:processes += Start-Process -FilePath $app -ArgumentList $job -PassThru
+for ($index = $start - 1; $index -lt $samples; $index += $chunk) {
+    $start = $index + 1
+    $end = [math]::min(($index + $chunk), $samples)
+    Write-Output "Starting $application -p $inputFile -c -r -f $start -l $end"
+    $block = {
+        param ([String]$application, [String[]]$arguments)
+        & $application $arguments
     }
-    return $processes
+    Start-Job -Name "cp-$start-$end" -ScriptBlock $block -ArgumentList @($application, @("-p", $inputFile, "-c", "-r", "-f", $start, "-l", $end))
 }
 
-Write-Output "preparing cellprofiler batch run"
-if ($numproc -eq 0) { 
-    $cc = Get-CPUs
-    Write-Output "detected $cc cores, going to create $cc processes"
-} else {
-    $cc = $numproc
-    Write-Output "using specified number of processes $cc"
-}
-
-$chunk = [math]::Ceiling(($samples-($start-1))/$cc)
-Write-Output  "Using chunk size $chunk"
-
-$commands = @()
-for ($index=$start-1; $index -lt $samples; $index+=$chunk) {
-    $first = $index+1
-    $last = [math]::min(($index + $chunk),$samples)
-    $commands += "-p $inputfile -c -r -f $first -l $last"
-}
-
-$processes = CellProfiler-Batch $commands $app
-
-$running = 0
-Do {
-    $running = 0
-    Write-Output "checking background processes"
-    foreach ($process in $processes) {
-        if (!$process.HasExited) {
-            $running++
+try {
+    [console]::TreatControlCAsInput = $true
+    Do {
+        if ([console]::KeyAvailable) {
+            $key = [system.console]::readkey($true)
+            if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+				Write-Output "Terminating on request..."
+				$abort = $true
+				break
+            }
         }
-    }
-    Write-Output "$running processes alive"
-    Start-Sleep 10
-} While ($running -ne 0)
+        Write-Output "currently $(@(Get-Job -Name cp-* | Where {$_.State -eq "Running"}).Count) / $jobCount active"
+        Get-Job -Name cp-* | ForEach-Object {
+            Write-Debug "[$($_.State)] $($_.Name) $($_.Progress)"
+        }
+        Start-Sleep 3
+    } While (@(Get-Job -Name cp-* | Where {$_.State -eq "Running"}).Count -ne 0)
 
-Write-Output "finished"
+	Get-Job -Name cp-* | ForEach-Object {
+		Write-Output "[$($_.State)] $($_.Name)"
+		if ($_.State -eq "Failed") {
+			Receive-Job -Job $_ | Set-Content "$($_.Name).err"
+			Write-Host "trying to write results for $($_.Name) to $($_.Name).err" -ForegroundColor Red
+		} else {
+			Receive-Job -Job $_ | Set-Content "$($_.Name).out"
+			Write-Host "trying to write results for $($_.Name) to $($_.Name).out" -ForegroundColor Green
+		}
+	}
+} finally {
+    Get-Job -Name cp-* | ForEach-Object { return "[$($_.State)] $($_.Name)" } | Set-Content "run-state.out"
+    Get-Job -Name cp-* | Remove-Job -Force
+    [console]::TreatControlCAsInput = $false
+    Write-Output "finished"
+}
