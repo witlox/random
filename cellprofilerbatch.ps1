@@ -52,16 +52,7 @@ for ($index = $start - 1; $index -lt $samples; $index += $chunk) {
 }
 
 try {
-    [console]::TreatControlCAsInput = $true
     Do {
-        if ([console]::KeyAvailable) {
-            $key = [system.console]::readkey($true)
-            if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-				Write-Output "Terminating on request..."
-				$abort = $true
-				break
-            }
-        }
         Write-Output "currently $(@(Get-Job -Name cp-* | Where {$_.State -eq "Running"}).Count) / $jobCount active"
         Get-Job -Name cp-* | ForEach-Object {
             Write-Debug "[$($_.State)] $($_.Name) $($_.Progress)"
@@ -82,6 +73,5 @@ try {
 } finally {
     Get-Job -Name cp-* | ForEach-Object { return "[$($_.State)] $($_.Name)" } | Set-Content "run-state.out"
     Get-Job -Name cp-* | Remove-Job -Force
-    [console]::TreatControlCAsInput = $false
-    Write-Output "finished"
+    Write-Output "finished" | Out-Default
 }
