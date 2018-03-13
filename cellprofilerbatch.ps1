@@ -25,9 +25,9 @@ param([String]$inputFile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$jobC
 Write-Debug "clearing old cache"
 Get-Job -Name cp-* | Remove-Job -Force
 
-Write-Output "starting cellprofiler batch run"
+Write-Host "starting cellprofiler batch run"
 if ($jobCount -eq 0) {
-    Write-Output "no jobCount specified, detecting number of cores"
+    Write-Host "no jobCount specified, detecting number of cores"
     $processors = Get-WmiObject -ComputerName localhost win32_processor
     if (@($processors)[0].NumberOfCores) {
         $cores = @($processors).count * @($processors)[0].NumberOfCores
@@ -43,7 +43,7 @@ Write-Debug "chunk size determined as $chunk"
 for ($index = $start - 1; $index -lt $samples; $index += $chunk) {
     $start = $index + 1
     $end = [math]::min(($index + $chunk), $samples)
-    Write-Output "Starting $application -p $inputFile -c -r -f $start -l $end"
+    Write-Host "Starting $application -p $inputFile -c -r -f $start -l $end"
     $block = {
         param ([String]$application, [String[]]$arguments)
         & $application $arguments
@@ -53,7 +53,7 @@ for ($index = $start - 1; $index -lt $samples; $index += $chunk) {
 
 try {
     Do {
-        Write-Output "currently $(@(Get-Job -Name cp-* | Where {$_.State -eq "Running"}).Count) / $jobCount active"
+        Write-Host "[$(Get-Date -UFormat "%D %T")] currently $(@(Get-Job -Name cp-* | Where {$_.State -eq "Running"}).Count) / $jobCount active"
         Get-Job -Name cp-* | ForEach-Object {
             Write-Debug "[$($_.State)] $($_.Name) $($_.Progress)"
         }
@@ -61,7 +61,7 @@ try {
     } While (@(Get-Job -Name cp-* | Where {$_.State -eq "Running"}).Count -ne 0)
 
 	Get-Job -Name cp-* | ForEach-Object {
-		Write-Output "[$($_.State)] $($_.Name)"
+		Write-Host "[$($_.State)] $($_.Name)"
 		if ($_.State -eq "Failed") {
 			Receive-Job -Job $_ | Set-Content "$($_.Name).err"
 			Write-Host "trying to write results for $($_.Name) to $($_.Name).err" -ForegroundColor Red
@@ -71,7 +71,7 @@ try {
 		}
 	}
 } finally {
-    Get-Job -Name cp-* | ForEach-Object { return "[$($_.State)] $($_.Name)" } | Set-Content "run-state.out"
+    @(Get-Job -Name cp-* | Where {$_.State -eq "Running"}) | ForEach-Object { return "killing $($_.Name)" } | Write-Host -ForegroundColor Red | Out-Default
     Get-Job -Name cp-* | Remove-Job -Force
-    Write-Output "finished" | Out-Default
+    Write-Host "finished" | Out-Default
 }
