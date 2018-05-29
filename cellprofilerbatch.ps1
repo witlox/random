@@ -20,7 +20,9 @@
 # jobCount: number of jobs to spawn (0 = as many as we have CPU's)
 # application: application to run
 # start: offset of the samples to start at
-param([String]$inputFile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$jobCount=0, [String]$application="C:\Program Files\CellProfiler\CellProfiler.exe", [Int32]$start=1)
+param([String]$inputFile="G:\Batch_data.h5", [Int32]$samples=92160, [Int32]$jobCount=0, [String]$application="C:\Program Files\CellProfiler\CellProfiler.exe", [Int32]$start=1, [String]$temp="", [switch]$debug)
+
+if ($Debug) { $DebugPreference = 'Continue' }
 
 Write-Debug "clearing old cache"
 Get-Job -Name cp-* | Remove-Job -Force
@@ -37,18 +39,26 @@ if ($jobCount -eq 0) {
     $jobCount = $cores
 }
 Write-Debug "setting number of jobs to $jobCount"
-$chunk = [math]::Ceiling(($samples-($start-1))/$jobCount)
+$chunk = [math]::Ceiling($samples/$jobCount)
 Write-Debug "chunk size determined as $chunk"
 
-for ($index = $start - 1; $index -lt $samples; $index += $chunk) {
-    $start = $index + 1
-    $end = [math]::min(($index + $chunk), $samples)
-    Write-Host "Starting $application -p $inputFile -c -r -f $start -l $end"
+for ($index = 0; $index -lt $samples; $index += $chunk) {
+    if ($index -ne 0) {
+        $begin = $index + $start + 1
+    } else {
+        $begin = $index + $start
+    }
+    $end = [math]::min(($index + $chunk), $samples) + $start
+    Write-Host "Starting $application -p $inputFile -c -r -f $begin -l $end"
     $block = {
         param ([String]$application, [String[]]$arguments)
         & $application $arguments
     }
-    Start-Job -Name "cp-$start-$end" -ScriptBlock $block -ArgumentList @($application, @("-p", $inputFile, "-c", "-r", "-f", $start, "-l", $end))
+    $arguments = @($application, @("-p", $inputFile, "-c", "-r", "-f", $begin, "-l", $end)
+    if (-not ([string]::IsNullOrEmpty($temp))) {
+        $arguments += @("-t", $temp)
+    }
+    Start-Job -Name "cp-$begin-$end" -ScriptBlock $block -ArgumentList $arguments)
 }
 
 try {
