@@ -1,0 +1,35 @@
+#BSUB -L /bin/bash
+#BSUB -J "spectra"
+#BSUB -o "spectra.%J"
+#BSUB -q "ac922_v100"
+
+# Set the SMT mode to 2 (recommended for PowerAI 1.5.1) and verify it
+sudo ppc64_cpu --smt=2
+ppc64_cpu --smt
+
+# Set the GPU compute mode to DEFAULT
+sudo nvidia-smi -c 0
+
+# Set the GPU clocks as recommended for PowerAI for V100
+sudo nvidia-smi -ac 877,1530
+
+# Where Anaconda was installed
+CONDA_ROOT=~/PowerAI_1.5.1/anaconda2
+
+# Add the Anaconda directory to the search path
+export PATH=${CONDA_ROOT}/bin:${PATH}
+
+# Now initialize the API(s) you need
+# [comment out or delete any line(s) you don't need]
+. /opt/DL/cudnn/bin/cudnn-activate
+. /opt/DL/ddl/bin/ddl-activate
+. /opt/DL/ddl/bin/ddl-pack-activate
+. /opt/DL/ddl-tensorflow/bin/ddl-tensorflow-activate
+. /opt/DL/hdf5/bin/hdf5-activate
+. /opt/DL/mldl-spectrum/bin/mldl-spectrum-activate
+. /opt/DL/nccl/bin/nccl-activate
+. /opt/DL/tensorboard/bin/tensorboard-activate
+. /opt/DL/tensorflow/bin/tensorflow-activate
+
+# run our job
+python ~/spectra_power.py -g 4 -i ~/sml.tsv -t ~/eval.tsv -w ~/outputs

@@ -1,0 +1,8 @@
+#!/bin/bash
+#SBATCH --qos=medium
+#SBATCH --ntasks=1 --cpus-per-task=16
+#SBATCH --time=32:0:0
+#SBATCH --gres gpu:Tesla-K80:16 --mem=128000
+module load vesta cuda/9.1
+source ~/.virtualenvs/tensorflow/bin/activate
+python ~/src/spectra.py -g 16 -i ~/data/sml.tsv -t ~/data/eval.tsv
